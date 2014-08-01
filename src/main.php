@@ -4,11 +4,16 @@
  * Простенький скрипт, реализующий защиту от несанкционированного
  * запуска "левых" скриптов.
  *
- * 2013 (C) InSysd
+ * Основан на использовании директивы auto_prepend_file и постройки списка
+ * разрешенных файлов
+ *
+ * @see http://intsystem.org/916/security-system-php-site/
+ *
+ * @author 2013 (C) InSysd
  */
  
  
-/** ------------------------ Главные настройки ----------------------------- * */
+/** ------------------------ Главные настройки ----------------------------- **/
 /* - Текущий способ работы скрипта:
  *
  *    false - режим обучения (STUDY). Режим в котором будут запоминаться все
@@ -22,14 +27,14 @@
 define('PSS_STATUS_BLOCK', true);
 
 
-/** ---------------------------- Конфигурация ------------------------------ * */
-$pss_config = array();
+/** ---------------------------- Конфигурация ------------------------------ **/
+$pssConfig = array();
 
 /* - Список допустимых IP администратора
  * Он имеет доступ ко всем скриптам вне зависимости от режима. Его действия не
  * будут влиять на стадии режима обучения.
  */
-$pss_config['admin_ip_list'] = array(
+$pssConfig['admin_ip_list'] = array(
 	//'1.*',
 	//'1.1.*',
 	//'1.*.*.*',
@@ -42,7 +47,7 @@ $pss_config['admin_ip_list'] = array(
  * попытках запуска неразрешенных скриптов (данную функциональность можно
  * отключить)
  */
-$pss_config['admin_email'] = 'admin@site';
+$pssConfig['admin_email'] = 'admin@site';
 
 /* - Тип блокировки в режиме блокировки
  * 0 - не блокировать запросы (будет отсылаться только email на почту админа
@@ -50,7 +55,7 @@ $pss_config['admin_email'] = 'admin@site';
  * 1 - блокировать запросы и выводить сообщение о блокировке
  * 2 - блокировать запросы и выводить ошибку 403
  */
-$pss_config['block_type'] = 2;
+$pssConfig['block_type'] = 2;
 
 /* - Высылать администратору письмо с уведомлением
  * Будет высылаться письмо уведомляющее администратора о попытке запуска
@@ -61,7 +66,7 @@ $pss_config['block_type'] = 2;
  * 2 - высылать развернутое описание, включает в себя заголовки ответа и строку
  * пост запроса
  */
-$pss_config['alarm_block_send_email'] = 2;
+$pssConfig['alarm_block_send_email'] = 2;
 
 /* - Уровень ошибок выводимых в браузер
  * Предупреждения будут выводится в браузер. Это может нарушить нормальную
@@ -70,47 +75,48 @@ $pss_config['alarm_block_send_email'] = 2;
  * 1 - вывод критичных ошибок (Warning)
  * 2 - вывод критичных ошибок (Warning) и замечений (Notice)
  */
-$pss_config['alarm_html_level'] = 2;
+$pssConfig['alarm_html_level'] = 2;
 
 /* - Вывод ошибок в браузер только для админа
  * Ошибки и предупреждения будут демонстрироваться только администратору
  * определенному по его IP адресу
  */
-$pss_config['alarm_html_only_admin'] = true;
+$pssConfig['alarm_html_only_admin'] = true;
 
 /* - Файл БД
  * Файл в котором будут хранится данные о допустимых скриптах. В режиме обучения
  * необходим доступ на запись. В боевом режиме запись должна быть запрещенна.
  */
-$pss_config['file_data'] = 'data.txt';
+$pssConfig['file_data'] = 'data.txt';
 
 
-/** ---------------------- Дополнительные параметры ------------------------ * */
+/** ---------------------- Дополнительные параметры ------------------------ **/
 /* * Внимание! При изменении параметров в данном разделе необходимо заново
  * создать базу данных с нуля */
 
 /* - Способ подсчета контрольной суммы
  * Допустимо: crc, md5, sha
  */
-$pss_config['control_crc_method'] = 'md5';
+$pssConfig['control_crc_method'] = 'md5';
 
 /* - Контролировать имя домена
  * Включить ведение разных логов для разных доменов
  */
-$pss_config['path_control_domain'] = true;
+$pssConfig['path_control_domain'] = true;
 
 /* - Контролировать номер порта
  * Включить ведение разных логов для разных локальных портов
  */
-$pss_config['path_control_port'] = false;
+$pssConfig['path_control_port'] = false;
 
 /* - Нормализация имени домена
  * При включении данной директивы будет удален начальный поддомен "www." из имени
  * домена
  */
-$pss_config['path_strip_domain'] = true;
+$pssConfig['path_strip_domain'] = true;
 
-/** -------------------------- Основной класс ------------------------------ * */
+
+/** -------------------------- Основной класс ------------------------------ **/
 class PssMain{
 
 	const
@@ -138,29 +144,29 @@ class PssMain{
 
 	/** База данных с индетификаторами разрешенных файлов
 	 * @var array */
-	private $file_data = array();
+	private $fileData = array();
 
-	/** Флаг изменения базы данных
+	/** Флаг изменения база данных
 	 * @var boolean */
-	private $file_data_changed = false;
+	private $fileDataChanged = false;
 
-	function __construct($is_status_block, $config_array)
+	function __construct($isStatusBlock, $configArray)
 	{
 		$this->inited = false;
 
-		if (!is_array($config_array)) {
+		if (!is_array($configArray)) {
 			trigger_error(__METHOD__ . ': input var "$config_array" must be an array', E_USER_WARNING);
 			return false;
 		}
 
-		if (!is_scalar($is_status_block)) {
+		if (!is_scalar($isStatusBlock)) {
 			trigger_error(__METHOD__ . ': input var "$is_status_block" must be a scalar', E_USER_WARNING);
 			return false;
 		}
 
-		$this->config = $config_array;
+		$this->config = $configArray;
 
-		if ($is_status_block) {
+		if ($isStatusBlock) {
 			$this->status = self::STATUS_BLOCK;
 		} else {
 			$this->status = self::STATUS_STUDY;
@@ -173,14 +179,14 @@ class PssMain{
 	 *
 	 * @return boolean
 	 */
-	protected function IsAdmin()
+	protected function isAdmin()
 	{
 		if (isset($_SERVER['REMOTE_ADDR']) && !empty($_SERVER['REMOTE_ADDR'])) {
-			$ip_list = $this->GetConfig('admin_ip_list');
+			$ipList = $this->getConfig('admin_ip_list');
 
-			$ip_user = $_SERVER['REMOTE_ADDR'];
+			$ipUser = $_SERVER['REMOTE_ADDR'];
 
-			foreach ($ip_list as $ip) {
+			foreach ($ipList as $ip) {
 				$ip = trim($ip);
 				if (empty($ip)) continue;
 
@@ -194,7 +200,7 @@ class PssMain{
 					}
 				}
 
-				if (preg_match('#^' . implode('\.', $pattern) . '$#', $ip_user)) {
+				if (preg_match('#^' . implode('\.', $pattern) . '$#', $ipUser)) {
 					return true;
 				}
 			}
@@ -207,77 +213,77 @@ class PssMain{
 	 *
 	 * @return boolean
 	 */
-	function Process()
+	function process()
 	{
 		if (!$this->inited) {
 			return false;
 		}
 
-		if (!$this->ProcessBDLoad()) {
+		if (!$this->processBDLoad()) {
 			return false;
 		}
 
-		if (!$this->IsAdmin()) {
-			$page_hash = $this->GetFileHash();
+		if (!$this->isAdmin()) {
+			$pageHash = $this->getFileHash();
 
-			if ($this->GetStatus() == self::STATUS_BLOCK) {
-				$this->ProcessStatusBlock($page_hash);
-			} elseif ($this->GetStatus() == self::STATUS_STUDY) {
-				$this->ProcessStatusStudy($page_hash);
+			if ($this->getStatus() == self::STATUS_BLOCK) {
+				$this->processStatusBlock($pageHash);
+			} elseif ($this->getStatus() == self::STATUS_STUDY) {
+				$this->processStatusStudy($pageHash);
 			}
 		}
 
-		if (!$this->ProcessBDSave()) {
+		if (!$this->processBDSave()) {
 			return false;
 		}
 	}
 
 	/** Режим обучения
 	 *
-	 * @param string $page_hash
+	 * @param string $pageHash
 	 */
-	protected function ProcessStatusStudy($page_hash)
+	protected function processStatusStudy($pageHash)
 	{
-		if (!$this->ProcessBDExists($page_hash)) {
-			$this->ProcessBDAdd($page_hash);
+		if (!$this->processBDExists($pageHash)) {
+			$this->processBDAdd($pageHash);
 		}
 	}
 
 	/** Режим блокирования
 	 *
-	 * @param string $page_hash
+	 * @param string $pageHash
 	 */
-	protected function ProcessStatusBlock($page_hash)
+	protected function processStatusBlock($pageHash)
 	{
-		if ($this->ProcessBDExists($page_hash) || $this->IsAdmin()) {
+		if ($this->processBDExists($pageHash) || $this->isAdmin()) {
 			return true;
 		}
 
-		if ($this->GetConfig('block_type') == 1) {
-			$this->PrintBlock();
-		} elseif ($this->GetConfig('block_type') == 2) {
-			$this->PrintForbidden();
+		if ($this->getConfig('block_type') == 1) {
+			$this->printBlock();
+		} elseif ($this->getConfig('block_type') == 2) {
+			$this->printForbidden();
 		}
 
-		if ($this->GetConfig('alarm_block_send_email') > 0 && strlen($this->GetConfig('admin_email')) > 0) {
-			$this->SendAdminEmail();
+		if ($this->getConfig('alarm_block_send_email') > 0 && strlen($this->getConfig('admin_email')) > 0) {
+			$this->sendAdminEmail();
 		}
 
-		if ($this->GetConfig('block_type') > 0) {
+		if ($this->getConfig('block_type') > 0) {
 			die();
 		}
 	}
 
 	/** Добавляем новую запись в базу
 	 *
-	 * @param string $new_hash
+	 * @param string $newHash
 	 * @return boolean
 	 */
-	protected function ProcessBDAdd($new_hash)
+	protected function processBDAdd($newHash)
 	{
-		if (!$this->ProcessBDExists($new_hash)) {
-			$this->file_data[]		 = $new_hash;
-			$this->file_data_changed = true;
+		if (!$this->processBDExists($newHash)) {
+			$this->fileData[] = $newHash;
+			$this->fileDataChanged = true;
 		} else {
 			return true;
 		}
@@ -288,52 +294,49 @@ class PssMain{
 	 * @param string $hash
 	 * @return boolean
 	 */
-	protected function ProcessBDExists($hash)
+	protected function processBDExists($hash)
 	{
-		return in_array($hash, $this->file_data);
+		return in_array($hash, $this->fileData);
 	}
 
 	/** Проверка файла БД
 	 *
 	 * @return boolean
 	 */
-	protected function ProcessBDLoad()
+	protected function processBDLoad()
 	{
-		$path_data_file = dirname(__FILE__) . '/' . $this->GetConfig('file_data');
+		$pathDataFile = dirname(__FILE__) . DIRECTORY_SEPARATOR . $this->getConfig('file_data');
 
-		if (!file_exists($path_data_file)) {
-			$this->PrintError('Файл базы не найден!', self::ERROR_WARNING);
+		if (!file_exists($pathDataFile)) {
+			$this->printError('Файл базы не найден!', self::ERROR_WARNING);
 			return false;
 		}
 
-		if (!is_readable($path_data_file)) {
-			$this->PrintError('Файл базы не доступен для чтения', self::ERROR_WARNING);
+		if (!is_readable($pathDataFile)) {
+			$this->printError('Файл базы не доступен для чтения', self::ERROR_WARNING);
 			return false;
 		}
 
-		if ($this->GetStatus() == self::STATUS_BLOCK) {
-			if (is_writable($path_data_file)) {
-				$this->PrintError('Файл базы доступен для записи.' . "\n" . 'Запретите запись в файл базы!',
-					  self::ERROR_NOTICE);
+		if ($this->getStatus() == self::STATUS_BLOCK) {
+			if (is_writable($pathDataFile)) {
+				$this->printError('Файл базы доступен для записи.' . "\n" . 'Запретите запись в файл базы!', self::ERROR_NOTICE);
 			}
 		} else {
-			if (!is_writable($path_data_file)) {
-				$this->PrintError('Файл базы не доступен для записи в обучающем режиме.' . "\n" . 'Разрешите запись в файл базы!',
-					  self::ERROR_NOTICE);
+			if (!is_writable($pathDataFile)) {
+				$this->printError('Файл базы не доступен для записи в обучающем режиме.' . "\n" . 'Разрешите запись в файл базы!', self::ERROR_NOTICE);
 			}
 		}
 
-		$data_string = @file_get_contents($path_data_file);
-		$data_string = trim($data_string);
+		$dataString = @file_get_contents($pathDataFile);
+		$dataString = trim($dataString);
 
-		if (strlen($data_string) > 0) {
-			$this->file_data = explode(self::FILE_DATA_SEPARATOR, $data_string);
+		if (strlen($dataString) > 0) {
+			$this->fileData = explode(self::FILE_DATA_SEPARATOR, $dataString);
 		}
 
-		if ($this->GetStatus() == self::STATUS_BLOCK) {
-			if (count($this->file_data) == 0) {
-				$this->PrintError('Файл базы данных пуст (нет ни одного разрешенного скрипта)',
-					  self::ERROR_NOTICE);
+		if ($this->getStatus() == self::STATUS_BLOCK) {
+			if (count($this->fileData) == 0) {
+				$this->printError('Файл базы данных пуст (нет ни одного разрешенного скрипта)', self::ERROR_NOTICE);
 			}
 		}
 
@@ -343,14 +346,14 @@ class PssMain{
 	/** Запись изменений в базу
 	 *
 	 */
-	protected function ProcessBDSave()
+	protected function processBDSave()
 	{
-		if ($this->file_data_changed) {
-			$path_data_file = dirname(__FILE__) . '/' . $this->GetConfig('file_data');
+		if ($this->fileDataChanged) {
+			$pathDataFile = dirname(__FILE__) . '/' . $this->getConfig('file_data');
 
-			if (is_writable($path_data_file)) {
-				$data_string = implode(self::FILE_DATA_SEPARATOR, $this->file_data);
-				file_put_contents($path_data_file, $data_string);
+			if (is_writable($pathDataFile)) {
+				$dataString = implode(self::FILE_DATA_SEPARATOR, $this->fileData);
+				file_put_contents($pathDataFile, $dataString);
 
 				return true;
 			} else {
@@ -364,45 +367,44 @@ class PssMain{
 	/** Отправка уведомления на администраторский email
 	 *
 	 */
-	protected function SendAdminEmail()
+	protected function sendAdminEmail()
 	{
-		$mail_subject = 'PSS: обращение к неразрешенной странице';
+		$mailSubject = 'PSS: обращение к неразрешенной странице';
 
-		$mail_body	 = array();
-		$mail_body[] = 'Дата: ' . date('d.m.Y H:i:s');
-		$mail_body[] = 'Ip адрес пользователя: ' . $_SERVER['REMOTE_ADDR'];
-		$mail_body[] = '--------------------------------------------';
+		$mailBody   = array();
+		$mailBody[] = 'Дата: ' . date('d.m.Y H:i:s');
+		$mailBody[] = 'Ip адрес пользователя: ' . $_SERVER['REMOTE_ADDR'];
+		$mailBody[] = '--------------------------------------------';
 
-		if (strlen($this->GetFileStringDomain()) > 0) {
-			$mail_body[] = 'Домен: ' . $this->GetFileStringDomain();
+		if (strlen($this->getFileStringDomain()) > 0) {
+			$mailBody[] = 'Домен: ' . $this->getFileStringDomain();
 		}
 
 		if (!empty($_SERVER['REQUEST_URI'])) {
-			$mail_body[] = 'Запрос: ' . $_SERVER['REQUEST_URI'];
+			$mailBody[] = 'Запрос: ' . $_SERVER['REQUEST_URI'];
 		}
 
-		if (strlen($this->GetFileStringName()) > 0) {
-			$mail_body[] = 'Файл: ' . $this->GetFileStringName();
+		if (strlen($this->getFileStringName()) > 0) {
+			$mailBody[] = 'Файл: ' . $this->getFileStringName();
 		}
 
-		$mail_body[] = '--------------------------------------------';
+		$mailBody[] = '--------------------------------------------';
 
-		if ($this->GetConfig('alarm_block_send_email') == 2) {
+		if ($this->getConfig('alarm_block_send_email') == 2) {
 			//Подробный отчет
 			if (!empty($_SERVER['REQUEST_METHOD'])) {
-				$mail_body[] = 'Тип запроса: ' . $_SERVER['REQUEST_METHOD'];
+				$mailBody[] = 'Тип запроса: ' . $_SERVER['REQUEST_METHOD'];
 			}
 
-			$mail_body[] = '--------------------------------------------';
+			$mailBody[] = '--------------------------------------------';
 
 			//Получение заголовков пакета
 			$headers = array();
 			if (!function_exists('getallheaders')) {
 				foreach ($_SERVER as $key => $value) {
 					if (substr($key, 0, 5) == "HTTP_") {
-						$key			 = str_replace(" ", "-",
-							ucwords(strtolower(str_replace("_", " ", substr($key, 5)))));
-						$headers[$key]	 = $value;
+						$key = str_replace(" ", "-", ucwords(strtolower(str_replace("_", " ", substr($key, 5)))));
+						$headers[$key] = $value;
 					}
 				}
 			} else {
@@ -410,8 +412,8 @@ class PssMain{
 			}
 
 			if (count($headers) > 0) {
-				$mail_body[] = 'Заголовки: ';
-				$mail_body[] = '';
+				$mailBody[] = 'Заголовки: ';
+				$mailBody[] = '';
 
 				foreach ($headers as $key => $value) {
 					$tmp = $key . ': ' . $value;
@@ -419,15 +421,15 @@ class PssMain{
 						$tmp = substr($tmp, 0, 1024) . '[......]';
 					}
 
-					$mail_body[] = $tmp;
+					$mailBody[] = $tmp;
 				}
 
-				$mail_body[] = '--------------------------------------------';
+				$mailBody[] = '--------------------------------------------';
 			}
 
 			if (!empty($_POST)) {
-				$mail_body[] = 'Пост запрос: ';
-				$mail_body[] = '';
+				$mailBody[] = 'Пост запрос: ';
+				$mailBody[] = '';
 
 				$tmp = array();
 				foreach ($_POST as $key => $value) {
@@ -439,15 +441,15 @@ class PssMain{
 					$tmp = substr($tmp, 0, 1024) . '[......]';
 				}
 
-				$mail_body[] = $tmp;
-				$mail_body[] = '--------------------------------------------';
+				$mailBody[] = $tmp;
+				$mailBody[] = '--------------------------------------------';
 			}
 		}
 
-		if ($this->GetConfig('block_type') > 0) {
-			$mail_body[] = 'Запрос заблокирован. Высланно данное уведомление.';
+		if ($this->getConfig('block_type') > 0) {
+			$mailBody[] = 'Запрос заблокирован. Высланно данное уведомление.';
 		} else {
-			$mail_body[] = 'Запрос не был заблокирован согласно конфигурации. Высланно данное уведомление.';
+			$mailBody[] = 'Запрос не был заблокирован согласно конфигурации. Высланно данное уведомление.';
 		}
 
 		//Письмо отсылаем в кодировке UTF-8
@@ -456,42 +458,41 @@ class PssMain{
 			'Content-Type: text/plain; charset="UTF-8";'
 		);
 
-		$mail_subject = '=?UTF-8?B?' . base64_encode($mail_subject) . '?=';
+		$mailSubject = '=?UTF-8?B?' . base64_encode($mailSubject) . '?=';
 
-		@mail($this->GetConfig('admin_email'), $mail_subject,
-						 implode("\r\n", $mail_body), implode("\n", $mail_headers));
+		@mail($this->getConfig('admin_email'), $mailSubject, implode("\r\n", $mailBody), implode("\n", $mail_headers));
 	}
 
 	/** Вывод ошибки в браузер
 	 *
-	 * @param string $error_message
-	 * @param integer $error_level
+	 * @param string $errorMessage
+	 * @param integer $errorLevel
 	 */
-	protected function PrintError($error_message, $error_level = self::ERROR_NOTICE)
+	protected function printError($errorMessage, $errorLevel = self::ERROR_NOTICE)
 	{
-		if ($this->GetConfig('alarm_html_only_admin') && !$this->IsAdmin()) {
+		if ($this->getConfig('alarm_html_only_admin') && !$this->isAdmin()) {
 			return true;
 		}
 
-		if ($error_level > $this->GetConfig('alarm_html_level')) {
+		if ($errorLevel > $this->getConfig('alarm_html_level')) {
 			return true;
 		}
 
-		switch ($error_level) {
+		switch ($errorLevel) {
 			case self::ERROR_NOTICE:
-				$error_title = 'Внимание!';
+				$errorTitle = 'Внимание!';
 				break;
 
 			case self::ERROR_WARNING:
-				$error_title = 'Критическая ошибка!';
+				$errorTitle = 'Критическая ошибка!';
 				break;
 		}
 
-		$error_message	 = 'Php Prepend Security System' . '\n\n' . htmlspecialchars($error_title) . '\n' . htmlspecialchars($error_message) . '\n\n' . htmlspecialchars('PSS (c) InSys 2013');
-		$error_message	 = str_replace("\r", '\n', $error_message);
-		$error_message	 = str_replace("\n", '\n', $error_message);
+		$errorMessage	 = 'Php Prepend Security System' . '\n\n' . htmlspecialchars($errorTitle) . '\n' . htmlspecialchars($errorMessage) . '\n\n' . htmlspecialchars('PSS (c) InSys 2013');
+		$errorMessage	 = str_replace("\r", '\n', $errorMessage);
+		$errorMessage	 = str_replace("\n", '\n', $errorMessage);
 
-		echo('<script>alert("' . $error_message . '");</script>');
+		echo('<script>alert("' . $errorMessage . '");</script>');
 	}
 
 	/** Вывод ошибки в браузер
@@ -499,7 +500,7 @@ class PssMain{
 	 * @param string $error_message
 	 * @param integer $error_level
 	 */
-	protected function PrintBlock()
+	protected function printBlock()
 	{
 		echo('Sorry, access to this page is blocked by PSS');
 	}
@@ -507,7 +508,7 @@ class PssMain{
 	/** Вывод ошибки в браузер
 	 *
 	 */
-	protected function PrintForbidden()
+	protected function printForbidden()
 	{
 		if (!isset($_SERVER['SERVER_SIGNATURE']) || empty($_SERVER['SERVER_SIGNATURE'])) {
 			$_SERVER['SERVER_SIGNATURE'] = 'Apache/2.2.4 (FreeBSD) mod_ssl/2.2.4 OpenSSL/0.9.8d PHP/5.2.4 Server at ' . ((!empty($_SERVER['HTTP_HOST'])) ? empty($_SERVER['HTTP_HOST']) : 'localhost') . ' Port ' . ((!empty($_SERVER['SERVER_PORT'])) ? empty($_SERVER['SERVER_PORT']) : '80');
@@ -535,7 +536,7 @@ class PssMain{
 	 * @param array $conf_section_name
 	 * @return mixed
 	 */
-	protected function GetConfig($conf_section_name)
+	protected function getConfig($conf_section_name)
 	{
 		if (!is_scalar($conf_section_name)) {
 			trigger_error(__METHOD__ . ': input var "$conf_section_name" must be a scalar', E_USER_WARNING);
@@ -554,7 +555,7 @@ class PssMain{
 	 *
 	 * @return boolean
 	 */
-	protected function GetStatus()
+	protected function getStatus()
 	{
 		return $this->status;
 	}
@@ -563,37 +564,37 @@ class PssMain{
 	 *
 	 * @return string
 	 */
-	protected function GetFileHash()
+	protected function getFileHash()
 	{
-		$hash_func = 'md5';
+		$hashFunc = 'md5';
 
-		switch (strtolower($this->GetConfig('control_crc_method'))) {
+		switch (strtolower($this->getConfig('control_crc_method'))) {
 			case 'crc':
 			case 'crc32':
-				$hash_func = 'crc32';
+				$hashFunc = 'crc32';
 				break;
 
 			case 'md5':
-				$hash_func = 'md5';
+				$hashFunc = 'md5';
 				break;
 
 			case 'sha':
 			case 'sha1':
-				$hash_func = 'sha1';
+				$hashFunc = 'sha1';
 				break;
 
 			default:
-				$hash_func = 'md5';
+				$hashFunc = 'md5';
 				break;
 		}
 
-		$file_string = $this->GetFileString();
+		$fileString = $this->getFileString();
 
-		if (function_exists($hash_func) && is_callable($hash_func)) {
-			$result = $hash_func($file_string);
+		if (function_exists($hashFunc) && is_callable($hashFunc)) {
+			$result = $hashFunc($fileString);
 		} else {
 			trigger_error(__METHOD__ . ': unknown hash function: ' . htmlspecialchars($conf_section_name), E_USER_NOTICE);
-			$result = base64_encode($file_string);
+			$result = base64_encode($fileString);
 		}
 
 		return $result;
@@ -606,19 +607,19 @@ class PssMain{
 	 *
 	 * @return string
 	 */
-	protected function GetFileString()
+	protected function getFileString()
 	{
 		$result = array();
 
-		if ($this->GetConfig('path_control_domain')) {
-			$result[] = (string)$this->GetFileStringDomain();
+		if ($this->getConfig('path_control_domain')) {
+			$result[] = (string)$this->getFileStringDomain();
 		}
 
-		if ($this->GetConfig('path_control_port')) {
-			$result[] = (string)$this->GetFileStringPort();
+		if ($this->getConfig('path_control_port')) {
+			$result[] = (string)$this->getFileStringPort();
 		}
 
-		$result[] = (string)$this->GetFileStringName();
+		$result[] = (string)$this->getFileStringName();
 
 		return implode(':', $result);
 	}
@@ -627,7 +628,7 @@ class PssMain{
 	 *
 	 * @return string
 	 */
-	private function GetFileStringName()
+	private function getFileStringName()
 	{
 		if (isset($_SERVER['SCRIPT_NAME']) && !empty($_SERVER['SCRIPT_NAME'])) {
 			$result = $_SERVER['SCRIPT_NAME'];
@@ -650,7 +651,7 @@ class PssMain{
 	 *
 	 * @return string
 	 */
-	private function GetFileStringDomain()
+	private function getFileStringDomain()
 	{
 		$result = '';
 
@@ -666,7 +667,7 @@ class PssMain{
 
 		$result = strtolower($result);
 
-		if ($this->GetConfig('path_strip_domain')) {
+		if ($this->getConfig('path_strip_domain')) {
 			$result = preg_replace('#^www\.#i', '', $result);
 		}
 
@@ -677,7 +678,7 @@ class PssMain{
 	 *
 	 * @return string
 	 */
-	private function GetFileStringPort()
+	private function getFileStringPort()
 	{
 		$result = '';
 
@@ -692,10 +693,10 @@ class PssMain{
 
 }
 
-/** --------------------------- Тело скрипта ------------------------------- * */
+/** --------------------------- Тело скрипта ------------------------------- **/
 //Инициализируем и запускаем основной класс
-$pss_class = new PssMain(PSS_STATUS_BLOCK, $pss_config);
-$pss_class->Process();
+$pssClass = new PssMain(PSS_STATUS_BLOCK, $pssConfig);
+$pssClass->process();
 
 //Не засоряем глобальное пространство
-unset($pss_class, $pss_config);
+unset($pssClass, $pssConfig);
